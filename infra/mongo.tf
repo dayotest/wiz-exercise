@@ -124,6 +124,10 @@ resource "aws_instance" "mongo" {
   })
 
   tags = { Name = "${var.project}-mongo" }
+
+  lifecycle {
+    ignore_changes = [ami, user_data]
+  }
 }
 
 # --- Intentionally weak: public-read, public-list backup bucket ---------------
