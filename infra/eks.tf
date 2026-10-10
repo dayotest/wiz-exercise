@@ -28,8 +28,11 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.31"
 
-  cluster_name    = local.cluster_name
-  cluster_version = "1.31"
+  cluster_name = local.cluster_name
+
+  # Fixed key administrators so the KMS key policy does not flip between runners
+  kms_key_administrators = concat([aws_iam_role.github_pipeline.arn], var.admin_principal_arns)
+  cluster_version        = "1.31"
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets # nodes live in private subnets
