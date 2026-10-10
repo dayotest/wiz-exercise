@@ -1,0 +1,60 @@
+name: 2-app
+# Pipeline 2: build image, scan it, push to ECR, roll out to Kubernetes
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", "k8s/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  build-scan-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image
+        run: |
+          IMAGE=${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPO }}:${{ github.sha }}
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build --build-arg STUDENT_NAME="${{ vars.YOUR_NAME }}" -t "$IMAGE" app
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          # 0 = report only. Set to 1 to block pushes that contain CRITICAL/HIGH findings.
+          exit-code: "0"
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+
+      - name: Push
+        run: docker push "$IMAGE"
+
+      - name: Deploy to EKS
+        run: |
+          aws eks update-kubeconfig --name ${{ vars.CLUSTER_NAME }} --region "$AWS_REGION"
+          sed "s|IMAGE_PLACEHOLDER|$IMAGE|" k8s/app.yaml | kubectl apply -f -
+          kubectl -n todo rollout status deploy/todo --timeout=180s
